@@ -43,7 +43,6 @@ function setupTrigger() {
     .everyMinutes(5)
     .create();
 
-  // Run once immediately after trigger setup
   syncFormVisibility();
 }
 
@@ -51,11 +50,9 @@ function setupTrigger() {
  * Time-driven trigger target.
  */
 function syncFormVisibility() {
-  const now = new Date();
-  const shouldOpen = isWithinAnySeminarWindow_(now);
   const form = FormApp.openById(CONFIG.FORM_ID);
 
-  if (shouldOpen) {
+  if (isWithinAnyEligibleWindow_()) {
     safeSetPublished_(form, true);
     safeCall_(() => form.setAcceptingResponses(true));
   } else {
@@ -65,21 +62,23 @@ function syncFormVisibility() {
   }
 }
 
-/* -------------------- Core window scan -------------------- */
+/* -------------------- Core logic -------------------- */
 
-function isWithinAnySeminarWindow_(now) {
+function isWithinAnyEligibleWindow_() {
   const sh = getSheetOrThrow_();
   const values = sh.getDataRange().getValues();
   if (!values || values.length < 2) return false;
 
-  const headerRow = values[0];
-  const titleIdx = findHeaderIndexStrict_(headerRow, CONFIG.TITLE_HEADER);
-  const startIdx = findHeaderIndexStrict_(headerRow, CONFIG.START_HEADER);
-  const endIdx = findHeaderIndexStrict_(headerRow, CONFIG.END_HEADER);
+  const header = values[0];
+  const titleIdx = findHeaderIndexStrict_(header, CONFIG.TITLE_HEADER);
+  const startIdx = findHeaderIndexStrict_(header, CONFIG.START_HEADER);
+  const endIdx = findHeaderIndexStrict_(header, CONFIG.END_HEADER);
+
+  const now = new Date();
 
   for (let r = 1; r < values.length; r++) {
     const title = values[r][titleIdx];
-    if (!hasText_(title)) continue;
+    if (!hasText_(title)) continue; // hard gate
 
     const start = asDateOrNull_(values[r][startIdx]);
     const end = asDateOrNull_(values[r][endIdx]);
@@ -87,9 +86,7 @@ function isWithinAnySeminarWindow_(now) {
     if (!start || !end) continue;
     if (end < start) continue;
 
-    if (now >= start && now <= end) {
-      return true;
-    }
+    if (now >= start && now <= end) return true;
   }
 
   return false;
@@ -100,9 +97,7 @@ function isWithinAnySeminarWindow_(now) {
 function getSheetOrThrow_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) throw new Error('No active spreadsheet.');
-  if (ss.getId() !== CONFIG.SPREADSHEET_ID) {
-    throw new Error('Wrong spreadsheet bound to script.');
-  }
+  if (ss.getId() !== CONFIG.SPREADSHEET_ID) throw new Error('Wrong spreadsheet bound to script.');
 
   const sh = ss.getSheetByName(CONFIG.SHEET_NAME);
   if (!sh) throw new Error('Missing worksheet: ' + CONFIG.SHEET_NAME);
@@ -110,21 +105,17 @@ function getSheetOrThrow_() {
 }
 
 function findHeaderIndexStrict_(headerRow, wantedHeader) {
-  const matches = [];
+  let match = -1;
   for (let i = 0; i < headerRow.length; i++) {
-    if (String(headerRow[i] || '').trim() === wantedHeader) matches.push(i);
+    if (String(headerRow[i] || '').trim() === wantedHeader) {
+      if (match !== -1) {
+        throw new Error('Duplicate header "' + wantedHeader + '" found. Keep only one.');
+      }
+      match = i;
+    }
   }
-
-  if (matches.length === 0) {
-    throw new Error('Missing required header: ' + wantedHeader);
-  }
-  if (matches.length > 1) {
-    throw new Error(
-      'Duplicate header "' + wantedHeader + '" found. Keep only one column with that exact header.'
-    );
-  }
-
-  return matches[0];
+  if (match === -1) throw new Error('Missing required header: ' + wantedHeader);
+  return match;
 }
 
 function hasText_(v) {
@@ -134,12 +125,12 @@ function hasText_(v) {
 function asDateOrNull_(v) {
   if (v === null || v === undefined || v === '') return null;
 
-  // Real Date object from Sheets date-time cells
+  // Native Date object from Sheets datetime cells
   if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v.getTime())) {
     return v;
   }
 
-  // Fallback parser for text values like "23.02.2026 11:00"
+  // Fallback parser for text like "23.02.2026 11:00"
   const s = String(v).trim();
   if (!s) return null;
 
@@ -152,7 +143,6 @@ function asDateOrNull_(v) {
     const minute = m[5] !== undefined ? Number(m[5]) : 0;
 
     const d = new Date(year, month - 1, day, hour, minute, 0, 0);
-
     if (
       d.getFullYear() === year &&
       d.getMonth() === month - 1 &&
@@ -171,19 +161,17 @@ function asDateOrNull_(v) {
 
 function safeSetPublished_(form, shouldPublish) {
   try {
-    if (typeof form.supportsAdvancedResponderPermissions === 'function') {
-      const supports = !!form.supportsAdvancedResponderPermissions();
-      if (supports && typeof form.setPublished === 'function') {
-        form.setPublished(shouldPublish);
-        return;
-      }
+    if (typeof form.supportsAdvancedResponderPermissions === 'function' &&
+        form.supportsAdvancedResponderPermissions() &&
+        typeof form.setPublished === 'function') {
+      form.setPublished(shouldPublish);
+      return;
     }
-
     if (typeof form.setPublished === 'function') {
       form.setPublished(shouldPublish);
     }
   } catch (e) {
-    // Intentionally silent (minimal script)
+    // silent by design (minimal script)
   }
 }
 
