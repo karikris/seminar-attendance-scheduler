@@ -26,7 +26,7 @@ const CONFIG = Object.freeze({
 function setupTrigger() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss || ss.getId() !== CONFIG.SPREADSHEET_ID) {
-    throw new Error('Run this from the Apps Script project bound to the production spreadsheet.');
+    throw new Error('Run this from the Apps Script project in your spreadsheet.');
   }
 
   const handler = 'syncFormVisibility';
